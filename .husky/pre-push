@@ -3,12 +3,60 @@
 # Configuration
 MAIN_BRANCH="main" # or "master"
 ENABLE_ON_ALL_BRANCHES=false # Set to true to run on all branches
+CLAUDE_TIMEOUT=60 # seconds
+MAX_RETRIES=2
 
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
+
+# Function to log with timestamp
+log() {
+    echo "${GREEN}[$(date '+%H:%M:%S')] $1${NC}"
+}
+
+log_error() {
+    echo "${RED}[$(date '+%H:%M:%S')] ERROR: $1${NC}"
+}
+
+log_warning() {
+    echo "${YELLOW}[$(date '+%H:%M:%S')] WARNING: $1${NC}"
+}
+
+# Function to call Claude with timeout and retry
+call_claude() {
+    local prompt="$1"
+    local output_file="$2"
+    local description="$3"
+    local retries=0
+    
+    log "Calling Claude for: $description"
+    
+    while [ $retries -lt $MAX_RETRIES ]; do
+        if timeout $CLAUDE_TIMEOUT claude -p "$prompt" > "$output_file" 2>/dev/null; then
+            if [ -s "$output_file" ]; then
+                log "✓ Claude call successful: $description"
+                return 0
+            else
+                log_warning "Claude returned empty response for: $description"
+            fi
+        else
+            retries=$((retries + 1))
+            log_warning "Claude call timed out/failed (attempt $retries/$MAX_RETRIES): $description"
+            
+            if [ $retries -lt $MAX_RETRIES ]; then
+                log "Retrying in 2 seconds..."
+                sleep 2
+            fi
+        fi
+    done
+    
+    log_error "All Claude attempts failed for: $description"
+    return 1
+}
 
 # Function to extract current version from package.json or VERSION file
 get_current_version() {
@@ -26,9 +74,23 @@ update_version() {
     new_version=$1
     if [ -f "package.json" ]; then
         # Use sed to update package.json
-        sed -i.bak "s/\"version\": *\"[^\"]*\"/\"version\": \"$new_version\"/" package.json && rm package.json.bak
+        sed -i.bak "s/\"version\": *\"[^\"]*\"/\"version\": \"$new_version\"/" package.json && rm -f package.json.bak
     else
         echo "$new_version" > VERSION
+    fi
+}
+
+# Function to create compact commit summary
+create_commit_summary() {
+    local commits="$1"
+    local max_length=500
+    
+    # Truncate if too long
+    if [ ${#commits} -gt $max_length ]; then
+        echo "$commits" | head -c $max_length
+        echo "... (truncated)"
+    else
+        echo "$commits"
     fi
 }
 
@@ -39,34 +101,34 @@ do
     
     # Check if we should run on this branch
     if [ "$ENABLE_ON_ALL_BRANCHES" = false ] && [ "$branch_name" != "$MAIN_BRANCH" ]; then
-        echo "${YELLOW}Skipping documentation update on branch: $branch_name${NC}"
+        log_warning "Skipping documentation update on branch: $branch_name"
         continue
     fi
     
     # Run Biome checks if available
     if [ -f "package.json" ] && [ -f "biome.json" ]; then
-        echo "${GREEN}Running Biome checks...${NC}"
+        log "Running Biome checks..."
         
         # Check if npm script exists
         if npm run | grep -q "check"; then
             if npm run check; then
-                echo "${GREEN}✓ Biome checks passed${NC}"
+                log "✓ Biome checks passed"
             else
-                echo "${RED}✗ Biome checks failed${NC}"
+                log_error "Biome checks failed"
                 echo "${YELLOW}Run 'npm run fix' to auto-fix issues or fix manually${NC}"
                 exit 1
             fi
         elif command -v biome >/dev/null 2>&1; then
             # Fallback to direct biome command
             if biome check .; then
-                echo "${GREEN}✓ Biome checks passed${NC}"
+                log "✓ Biome checks passed"
             else
-                echo "${RED}✗ Biome checks failed${NC}"
+                log_error "Biome checks failed"
                 echo "${YELLOW}Run 'biome check --write .' to auto-fix issues${NC}"
                 exit 1
             fi
         else
-            echo "${YELLOW}Biome not available, skipping checks${NC}"
+            log_warning "Biome not available, skipping checks"
         fi
     fi
     
@@ -87,115 +149,80 @@ do
     fi
     
     # Gather information
-    echo "${GREEN}Analyzing commits for documentation update...${NC}"
+    log "Analyzing commits for documentation update..."
     
     # Get all changes
-    changes=$(git diff --name-status $range)
+    changes=$(git diff --name-status $range | head -10)
     
-    # Get commits with conventional commit parsing
-    commits_raw=$(git log --pretty=format:"%H|%s|%b" $range)
+    # Get commits with conventional commit parsing (limit to recent commits)
+    commits_raw=$(git log --pretty=format:"%s" $range | head -5)
     
-    # Parse commits by type
+    # Parse commits by type (simplified)
     feat_commits=""
     fix_commits=""
     breaking_commits=""
     docs_commits=""
-    style_commits=""
-    refactor_commits=""
-    perf_commits=""
-    test_commits=""
-    chore_commits=""
     other_commits=""
     
-    # Analyze each commit
-    echo "$commits_raw" | while IFS='|' read -r hash subject body; do
+    # Analyze each commit with simpler logic
+    echo "$commits_raw" | while IFS= read -r subject; do
         # Skip empty lines
-        [ -z "$hash" ] && continue
+        [ -z "$subject" ] && continue
         
         # Extract commit type and check for breaking changes
-        if echo "$subject" | grep -q "^feat"; then
-            feat_commits="${feat_commits}- ${subject}\n"
-        elif echo "$subject" | grep -q "^fix"; then
-            fix_commits="${fix_commits}- ${subject}\n"
-        elif echo "$subject" | grep -q "^docs"; then
-            docs_commits="${docs_commits}- ${subject}\n"
-        elif echo "$subject" | grep -q "^style"; then
-            style_commits="${style_commits}- ${subject}\n"
-        elif echo "$subject" | grep -q "^refactor"; then
-            refactor_commits="${refactor_commits}- ${subject}\n"
-        elif echo "$subject" | grep -q "^perf"; then
-            perf_commits="${perf_commits}- ${subject}\n"
-        elif echo "$subject" | grep -q "^test"; then
-            test_commits="${test_commits}- ${subject}\n"
-        elif echo "$subject" | grep -q "^chore"; then
-            chore_commits="${chore_commits}- ${subject}\n"
-        else
-            other_commits="${other_commits}- ${subject}\n"
-        fi
+        case "$subject" in
+            feat:*|feat\(*\):*)
+                feat_commits="${feat_commits}- ${subject}\n" ;;
+            fix:*|fix\(*\):*)
+                fix_commits="${fix_commits}- ${subject}\n" ;;
+            docs:*|docs\(*\):*)
+                docs_commits="${docs_commits}- ${subject}\n" ;;
+            *)
+                other_commits="${other_commits}- ${subject}\n" ;;
+        esac
         
         # Check for breaking changes
-        if echo "$subject $body" | grep -q "BREAKING CHANGE\|!:"; then
+        if echo "$subject" | grep -q "!:" || echo "$subject" | grep -q "BREAKING CHANGE"; then
             breaking_commits="${breaking_commits}- ${subject}\n"
         fi
     done
     
+    # Re-read the variables (shell subshell issue workaround)
+    feat_commits=$(echo "$commits_raw" | grep "^feat" | head -3 | sed 's/^/- /' || echo "")
+    fix_commits=$(echo "$commits_raw" | grep "^fix" | head -3 | sed 's/^/- /' || echo "")
+    docs_commits=$(echo "$commits_raw" | grep "^docs" | head -3 | sed 's/^/- /' || echo "")
+    breaking_commits=$(echo "$commits_raw" | grep -E "!:|BREAKING CHANGE" | head -2 | sed 's/^/- /' || echo "")
+    other_commits=$(echo "$commits_raw" | grep -v -E "^(feat|fix|docs)" | head -2 | sed 's/^/- /' || echo "")
+    
     # Get current version
     current_version=$(get_current_version)
     
-    # Prepare commit categorization for Claude
-    categorized_commits="Features:
-$feat_commits
-
-Fixes:
-$fix_commits
-
-Breaking Changes:
-$breaking_commits
-
-Documentation:
-$docs_commits
-
-Other Changes:
-$other_commits"
+    # Prepare compact commit categorization
+    commit_summary=$(create_commit_summary "Recent changes:
+${feat_commits}${fix_commits}${docs_commits}${other_commits}")
     
-    # Update CLAUDE.md
-    echo "${GREEN}Updating CLAUDE.md...${NC}"
-    claude -p "Update CLAUDE.md based on these changes:
-    
-Current version: $current_version
-Branch: $branch_name
-Files changed:
-$changes
-
-Categorized commits:
-$categorized_commits
-
-Current CLAUDE.md:
-$(cat CLAUDE.md 2>/dev/null || echo "No CLAUDE.md found")
-
-Please update the documentation to reflect these changes, removing outdated information and adding new relevant details.
-Focus on user-facing changes and important technical details." > CLAUDE.md.tmp
-    
-    # Determine version bump and update CHANGELOG.md
-    echo "${GREEN}Analyzing version bump and updating CHANGELOG.md...${NC}"
-    version_analysis=$(claude -p "Based on these commits, determine the appropriate semantic version bump:
+    # Determine version bump with simplified Claude call
+    log "Analyzing version bump..."
+    version_prompt="Analyze these commits for semantic versioning. Reply with ONLY: major, minor, patch, or none
 
 Current version: $current_version
-Breaking changes: $breaking_commits
-Features: $feat_commits
-Fixes: $fix_commits
+Changes: $commit_summary
 
-Reply with ONLY one of: major, minor, patch, none
-Rules:
-- Breaking changes = major
-- New features = minor  
-- Only fixes = patch
-- No significant changes = none")
+Rules: breaking change=major, new feature=minor, bugfix=patch, docs/chore=none"
+    
+    if call_claude "$version_prompt" "version.tmp" "version analysis"; then
+        version_analysis=$(cat version.tmp | tr -d '\n' | tr -d ' ')
+        rm -f version.tmp
+    else
+        log_warning "Version analysis failed, defaulting to patch"
+        version_analysis="patch"
+    fi
     
     # Calculate new version
     major=$(echo "$current_version" | cut -d. -f1)
     minor=$(echo "$current_version" | cut -d. -f2)
     patch=$(echo "$current_version" | cut -d. -f3)
+    
     case "$version_analysis" in
         "major")
             new_version="$((major + 1)).0.0"
@@ -211,152 +238,143 @@ Rules:
             ;;
     esac
     
-    # Update CHANGELOG.md
-    claude -p "Update CHANGELOG.md with these changes:
+    log "Version: $current_version → $new_version"
+    
+    # Update documentation files with batch processing
+    docs_updated=false
+    
+    # Update CLAUDE.md (simplified)
+    if [ -f "CLAUDE.md" ]; then
+        claude_prompt="Update CLAUDE.md with these recent changes:
+        
+Version: $new_version
+Changes: $commit_summary
 
-New version: $new_version (was $current_version)
+Keep existing structure, add relevant updates. Be concise."
+        
+        if call_claude "$claude_prompt" "CLAUDE.md.tmp" "CLAUDE.md update"; then
+            if [ -f "CLAUDE.md.tmp" ] && ! cmp -s CLAUDE.md CLAUDE.md.tmp 2>/dev/null; then
+                mv CLAUDE.md.tmp CLAUDE.md
+                git add CLAUDE.md
+                docs_updated=true
+                log "✓ CLAUDE.md updated"
+            else
+                rm -f CLAUDE.md.tmp
+            fi
+        else
+            log_warning "CLAUDE.md update failed, skipping"
+            rm -f CLAUDE.md.tmp
+        fi
+    fi
+    
+    # Update CHANGELOG.md (simplified)
+    changelog_prompt="Add entry to CHANGELOG.md:
+
+Version: $new_version (from $current_version)
 Date: $(date +%Y-%m-%d)
+Changes: $commit_summary
 
-Commits by category:
-$categorized_commits
+Current changelog:
+$(head -20 CHANGELOG.md 2>/dev/null)
 
-Current CHANGELOG.md:
-$(cat CHANGELOG.md 2>/dev/null || echo "# Changelog\nAll notable changes to this project will be documented in this file.\n\nThe format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\nand this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).")
-
-Add a new entry for version $new_version following the Keep a Changelog format.
-Group changes by: Added, Changed, Deprecated, Removed, Fixed, Security
-Only include user-facing and significant changes." > CHANGELOG.md.tmp
+Add new entry following Keep a Changelog format. Be concise."
     
-    # Check and update/create README.md
-    echo "${GREEN}Checking README.md...${NC}"
-    
-    # Get project context
-    project_files=$(find . -maxdepth 2 -type f -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.json" -o -name "*.md" -o -name "*.sh" | grep -v node_modules | head -20)
-    
-    if [ -f "README.md" ]; then
-        # Update existing README
-        claude -p "Update README.md based on these project changes:
-
-Current version: $new_version
-Project files detected:
-$project_files
-
-Recent commits:
-$categorized_commits
-
-Files changed in this push:
-$changes
-
-Current README.md:
-$(cat README.md)
-
-Please update the README to:
-1. Reflect any new features, installation steps, or usage changes
-2. Update version numbers if mentioned
-3. Add or update sections as needed based on recent changes
-4. Keep the existing structure but improve clarity and accuracy
-5. Ensure all commands and examples are current
-
-Focus on user-facing changes and maintain professional documentation standards." > README.md.tmp
+    if call_claude "$changelog_prompt" "CHANGELOG.md.tmp" "CHANGELOG update"; then
+        if [ -f "CHANGELOG.md.tmp" ] && ! cmp -s CHANGELOG.md CHANGELOG.md.tmp 2>/dev/null; then
+            mv CHANGELOG.md.tmp CHANGELOG.md
+            git add CHANGELOG.md
+            docs_updated=true
+            log "✓ CHANGELOG.md updated"
+        else
+            rm -f CHANGELOG.md.tmp
+        fi
     else
-        # Create new README
-        claude -p "Create a comprehensive README.md for this project:
-
-Project version: $new_version
-Project files detected:
-$project_files
-
-Recent development:
-$categorized_commits
-
-Package.json info:
-$(cat package.json 2>/dev/null || echo "No package.json found")
-
-Please create a professional README.md that includes:
-1. Project title and description
-2. Installation instructions
-3. Usage examples and commands
-4. Features list based on detected files
-5. Development setup if applicable
-6. Contributing guidelines (basic)
-7. License information
-8. Any relevant badges or status indicators
-
-Base the content on the actual files and structure detected in the project.
-Make it informative but concise, following modern README best practices." > README.md.tmp
-    fi
-    
-    # Generate release notes if this is a tag push
-    if [ "$is_tag_push" = true ]; then
-        echo "${GREEN}Generating release notes for tag: $tag_name${NC}"
-        claude -p "Generate concise release notes for version $tag_name:
-
-Changes in this release:
-$categorized_commits
-
-Focus on:
-1. Major features and improvements
-2. Important bug fixes
-3. Breaking changes (if any)
-4. Migration instructions (if needed)
-
-Keep it user-friendly and highlight the most impactful changes." > RELEASE_NOTES.md
-    fi
-    
-    # Only make changes if files were actually modified
-    files_changed=false
-    
-    if [ -f "CLAUDE.md.tmp" ] && ! cmp -s CLAUDE.md CLAUDE.md.tmp 2>/dev/null; then
-        mv CLAUDE.md.tmp CLAUDE.md
-        git add CLAUDE.md
-        files_changed=true
-        echo "${GREEN}✓ CLAUDE.md updated${NC}"
-    else
-        rm -f CLAUDE.md.tmp
-    fi
-    
-    if [ -f "CHANGELOG.md.tmp" ] && ! cmp -s CHANGELOG.md CHANGELOG.md.tmp 2>/dev/null; then
-        mv CHANGELOG.md.tmp CHANGELOG.md
-        git add CHANGELOG.md
-        files_changed=true
-        echo "${GREEN}✓ CHANGELOG.md updated${NC}"
-    else
+        log_warning "CHANGELOG.md update failed, skipping"
         rm -f CHANGELOG.md.tmp
     fi
     
-    if [ -f "README.md.tmp" ] && ! cmp -s README.md README.md.tmp 2>/dev/null; then
-        mv README.md.tmp README.md
-        git add README.md
-        files_changed=true
-        echo "${GREEN}✓ README.md updated${NC}"
+    # Update README.md (simplified)
+    if [ -f "README.md" ]; then
+        readme_prompt="Update README.md for version $new_version:
+
+Recent changes: $commit_summary
+Project files: $(find . -maxdepth 1 -name "*.json" -o -name "*.js" -o -name "*.md" | head -5)
+
+Current README (first 10 lines):
+$(head -10 README.md)
+
+Update version numbers and add any relevant changes. Keep it concise."
+        
+        if call_claude "$readme_prompt" "README.md.tmp" "README update"; then
+            if [ -f "README.md.tmp" ] && ! cmp -s README.md README.md.tmp 2>/dev/null; then
+                mv README.md.tmp README.md
+                git add README.md
+                docs_updated=true
+                log "✓ README.md updated"
+            else
+                rm -f README.md.tmp
+            fi
+        else
+            log_warning "README.md update failed, skipping"
+            rm -f README.md.tmp
+        fi
     else
-        rm -f README.md.tmp
+        # Create new README
+        new_readme_prompt="Create README.md for AutoDoc project version $new_version:
+
+Recent development: $commit_summary
+Files: $(ls *.json *.js *.md 2>/dev/null | head -5)
+
+Create concise README with title, description, installation, usage. Professional but brief."
+        
+        if call_claude "$new_readme_prompt" "README.md.tmp" "README creation"; then
+            if [ -s "README.md.tmp" ]; then
+                mv README.md.tmp README.md
+                git add README.md
+                docs_updated=true
+                log "✓ README.md created"
+            else
+                rm -f README.md.tmp
+            fi
+        else
+            log_warning "README.md creation failed, skipping"
+            rm -f README.md.tmp
+        fi
     fi
     
     # Update version if it changed
     if [ "$new_version" != "$current_version" ] && [ "$version_analysis" != "none" ]; then
         update_version "$new_version"
         git add package.json VERSION 2>/dev/null
-        files_changed=true
-        echo "${GREEN}✓ Version bumped to $new_version${NC}"
+        docs_updated=true
+        log "✓ Version bumped to $new_version"
     fi
     
-    # Add release notes if generated
-    if [ -f "RELEASE_NOTES.md" ]; then
-        git add RELEASE_NOTES.md
-        files_changed=true
-        echo "${GREEN}✓ Release notes generated${NC}"
+    # Generate release notes if this is a tag push
+    if [ "$is_tag_push" = true ]; then
+        log "Generating release notes for tag: $tag_name"
+        release_prompt="Generate release notes for $tag_name:
+        
+Changes: $commit_summary
+
+Create concise release notes highlighting key features, fixes, and breaking changes."
+        
+        if call_claude "$release_prompt" "RELEASE_NOTES.md" "release notes"; then
+            git add RELEASE_NOTES.md
+            docs_updated=true
+            log "✓ Release notes generated"
+        else
+            log_warning "Release notes generation failed"
+        fi
     fi
     
     # Commit changes if any
-    if [ "$files_changed" = true ]; then
+    if [ "$docs_updated" = true ]; then
         # Create commit message
         commit_msg="docs: auto-update documentation and version
 
-- Updated CLAUDE.md with latest changes
-- Updated CHANGELOG.md for version $new_version
-- Updated README.md with current project state
-- Bumped version from $current_version to $new_version"
+- Updated documentation for version $new_version
+- Changes: $(echo "$commit_summary" | head -c 100)..."
         
         if [ "$is_tag_push" = true ]; then
             commit_msg="$commit_msg
@@ -364,11 +382,15 @@ Keep it user-friendly and highlight the most impactful changes." > RELEASE_NOTES
         fi
         
         git commit -m "$commit_msg" --no-verify
-        echo "${GREEN}✅ Documentation updated and committed${NC}"
+        log "✅ Documentation updated and committed"
     else
-        echo "${YELLOW}ℹ No documentation changes needed${NC}"
+        log_warning "No documentation changes made"
     fi
+    
+    # Clean up any remaining temp files
+    rm -f *.tmp
+    
 done
 
 # Final message
-echo "${GREEN}Ready to push with updated documentation!${NC}"
+log "Ready to push with updated documentation!"
