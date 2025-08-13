@@ -1,0 +1,277 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Configuration
+MAIN_BRANCH="main" # or "master"
+ENABLE_ON_ALL_BRANCHES=false # Set to true to run on all branches
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Function to extract current version from package.json or VERSION file
+get_current_version() {
+    if [ -f "package.json" ]; then
+        grep -o '"version": *"[^"]*"' package.json | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+'
+    elif [ -f "VERSION" ]; then
+        cat VERSION
+    else
+        echo "0.0.0"
+    fi
+}
+
+# Function to update version in package.json or VERSION file
+update_version() {
+    new_version=$1
+    if [ -f "package.json" ]; then
+        # Use sed to update package.json
+        sed -i.bak "s/\"version\": *\"[^\"]*\"/\"version\": \"$new_version\"/" package.json && rm package.json.bak
+    else
+        echo "$new_version" > VERSION
+    fi
+}
+
+while read local_ref local_sha remote_ref remote_sha
+do
+    # Extract branch name
+    branch_name=$(git rev-parse --abbrev-ref HEAD)
+    
+    # Check if we should run on this branch
+    if [ "$ENABLE_ON_ALL_BRANCHES" = false ] && [ "$branch_name" != "$MAIN_BRANCH" ]; then
+        echo "${YELLOW}Skipping documentation update on branch: $branch_name${NC}"
+        continue
+    fi
+    
+    # Determine commit range
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+        # New branch
+        range="origin/$MAIN_BRANCH..HEAD"
+    else
+        # Existing branch
+        range="$remote_sha..$local_sha"
+    fi
+    
+    # Check if this is a tag push
+    is_tag_push=false
+    if expr "$local_ref" : "refs/tags/" >/dev/null; then
+        is_tag_push=true
+        tag_name=$(basename "$local_ref")
+    fi
+    
+    # Gather information
+    echo "${GREEN}Analyzing commits for documentation update...${NC}"
+    
+    # Get all changes
+    changes=$(git diff --name-status $range)
+    
+    # Get commits with conventional commit parsing
+    commits_raw=$(git log --pretty=format:"%H|%s|%b" $range)
+    
+    # Parse commits by type
+    feat_commits=""
+    fix_commits=""
+    breaking_commits=""
+    docs_commits=""
+    style_commits=""
+    refactor_commits=""
+    perf_commits=""
+    test_commits=""
+    chore_commits=""
+    other_commits=""
+    
+    # Analyze each commit
+    while IFS='|' read -r hash subject body; do
+        # Skip empty lines
+        [ -z "$hash" ] && continue
+        
+        # Extract commit type and check for breaking changes
+        if echo "$subject" | grep -q "^feat"; then
+            feat_commits="${feat_commits}- ${subject}\n"
+        elif echo "$subject" | grep -q "^fix"; then
+            fix_commits="${fix_commits}- ${subject}\n"
+        elif echo "$subject" | grep -q "^docs"; then
+            docs_commits="${docs_commits}- ${subject}\n"
+        elif echo "$subject" | grep -q "^style"; then
+            style_commits="${style_commits}- ${subject}\n"
+        elif echo "$subject" | grep -q "^refactor"; then
+            refactor_commits="${refactor_commits}- ${subject}\n"
+        elif echo "$subject" | grep -q "^perf"; then
+            perf_commits="${perf_commits}- ${subject}\n"
+        elif echo "$subject" | grep -q "^test"; then
+            test_commits="${test_commits}- ${subject}\n"
+        elif echo "$subject" | grep -q "^chore"; then
+            chore_commits="${chore_commits}- ${subject}\n"
+        else
+            other_commits="${other_commits}- ${subject}\n"
+        fi
+        
+        # Check for breaking changes
+        if echo "$subject $body" | grep -q "BREAKING CHANGE\|!:"; then
+            breaking_commits="${breaking_commits}- ${subject}\n"
+        fi
+    done <<< "$commits_raw"
+    
+    # Get current version
+    current_version=$(get_current_version)
+    
+    # Prepare commit categorization for Claude
+    categorized_commits="Features:
+$feat_commits
+
+Fixes:
+$fix_commits
+
+Breaking Changes:
+$breaking_commits
+
+Documentation:
+$docs_commits
+
+Other Changes:
+$other_commits"
+    
+    # Update CLAUDE.md
+    echo "${GREEN}Updating CLAUDE.md...${NC}"
+    claude -p "Update CLAUDE.md based on these changes:
+    
+Current version: $current_version
+Branch: $branch_name
+Files changed:
+$changes
+
+Categorized commits:
+$categorized_commits
+
+Current CLAUDE.md:
+$(cat CLAUDE.md 2>/dev/null || echo "No CLAUDE.md found")
+
+Please update the documentation to reflect these changes, removing outdated information and adding new relevant details.
+Focus on user-facing changes and important technical details." > CLAUDE.md.tmp
+    
+    # Determine version bump and update CHANGELOG.md
+    echo "${GREEN}Analyzing version bump and updating CHANGELOG.md...${NC}"
+    version_analysis=$(claude -p "Based on these commits, determine the appropriate semantic version bump:
+
+Current version: $current_version
+Breaking changes: $breaking_commits
+Features: $feat_commits
+Fixes: $fix_commits
+
+Reply with ONLY one of: major, minor, patch, none
+Rules:
+- Breaking changes = major
+- New features = minor  
+- Only fixes = patch
+- No significant changes = none")
+    
+    # Calculate new version
+    IFS='.' read -r major minor patch <<< "$current_version"
+    case "$version_analysis" in
+        "major")
+            new_version="$((major + 1)).0.0"
+            ;;
+        "minor")
+            new_version="$major.$((minor + 1)).0"
+            ;;
+        "patch")
+            new_version="$major.$minor.$((patch + 1))"
+            ;;
+        *)
+            new_version="$current_version"
+            ;;
+    esac
+    
+    # Update CHANGELOG.md
+    claude -p "Update CHANGELOG.md with these changes:
+
+New version: $new_version (was $current_version)
+Date: $(date +%Y-%m-%d)
+
+Commits by category:
+$categorized_commits
+
+Current CHANGELOG.md:
+$(cat CHANGELOG.md 2>/dev/null || echo "# Changelog\nAll notable changes to this project will be documented in this file.\n\nThe format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),\nand this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).")
+
+Add a new entry for version $new_version following the Keep a Changelog format.
+Group changes by: Added, Changed, Deprecated, Removed, Fixed, Security
+Only include user-facing and significant changes." > CHANGELOG.md.tmp
+    
+    # Generate release notes if this is a tag push
+    if [ "$is_tag_push" = true ]; then
+        echo "${GREEN}Generating release notes for tag: $tag_name${NC}"
+        claude -p "Generate concise release notes for version $tag_name:
+
+Changes in this release:
+$categorized_commits
+
+Focus on:
+1. Major features and improvements
+2. Important bug fixes
+3. Breaking changes (if any)
+4. Migration instructions (if needed)
+
+Keep it user-friendly and highlight the most impactful changes." > RELEASE_NOTES.md
+    fi
+    
+    # Only make changes if files were actually modified
+    files_changed=false
+    
+    if [ -f "CLAUDE.md.tmp" ] && ! cmp -s CLAUDE.md CLAUDE.md.tmp 2>/dev/null; then
+        mv CLAUDE.md.tmp CLAUDE.md
+        git add CLAUDE.md
+        files_changed=true
+        echo "${GREEN}✓ CLAUDE.md updated${NC}"
+    else
+        rm -f CLAUDE.md.tmp
+    fi
+    
+    if [ -f "CHANGELOG.md.tmp" ] && ! cmp -s CHANGELOG.md CHANGELOG.md.tmp 2>/dev/null; then
+        mv CHANGELOG.md.tmp CHANGELOG.md
+        git add CHANGELOG.md
+        files_changed=true
+        echo "${GREEN}✓ CHANGELOG.md updated${NC}"
+    else
+        rm -f CHANGELOG.md.tmp
+    fi
+    
+    # Update version if it changed
+    if [ "$new_version" != "$current_version" ] && [ "$version_analysis" != "none" ]; then
+        update_version "$new_version"
+        git add package.json VERSION 2>/dev/null
+        files_changed=true
+        echo "${GREEN}✓ Version bumped to $new_version${NC}"
+    fi
+    
+    # Add release notes if generated
+    if [ -f "RELEASE_NOTES.md" ]; then
+        git add RELEASE_NOTES.md
+        files_changed=true
+        echo "${GREEN}✓ Release notes generated${NC}"
+    fi
+    
+    # Commit changes if any
+    if [ "$files_changed" = true ]; then
+        # Create commit message
+        commit_msg="docs: auto-update documentation and version
+
+- Updated CLAUDE.md with latest changes
+- Updated CHANGELOG.md for version $new_version
+- Bumped version from $current_version to $new_version"
+        
+        if [ "$is_tag_push" = true ]; then
+            commit_msg="$commit_msg
+- Generated release notes for $tag_name"
+        fi
+        
+        git commit -m "$commit_msg" --no-verify
+        echo "${GREEN}✅ Documentation updated and committed${NC}"
+    else
+        echo "${YELLOW}ℹ No documentation changes needed${NC}"
+    fi
+done
+
+# Final message
+echo "${GREEN}Ready to push with updated documentation!${NC}"
