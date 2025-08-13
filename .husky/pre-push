@@ -36,7 +36,7 @@ call_claude() {
     log "Calling Claude for: $description"
     
     while [ $retries -lt $MAX_RETRIES ]; do
-        if timeout $CLAUDE_TIMEOUT claude -p "$prompt" > "$output_file" 2>/dev/null; then
+        if timeout $CLAUDE_TIMEOUT claude --permission-mode bypassPermissions -p "$prompt" > "$output_file" 2>/dev/null; then
             if [ -s "$output_file" ]; then
                 log "✓ Claude call successful: $description"
                 return 0
