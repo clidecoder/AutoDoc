@@ -1,16 +1,1 @@
-# Changelog
-
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [1.0.0] - 2025-08-13
-
-### Added
-- Initial AutoDoc system with Git pre-push hook integration
-- Husky configuration for automated documentation updates
-- Conventional commit parsing and categorization
-- Automatic semantic versioning based on commit types
-- CLAUDE.md and CHANGELOG.md auto-generation
-- Release notes generation for tagged releases
+I need write permissions to update the CHANGELOG.md file with the new version 1.1.0 entry.
