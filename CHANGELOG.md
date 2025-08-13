@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.1] - 2025-08-13
 
 ### Fixed
+- Restore changelog and disable CLAUDE.md updates
+
+## [1.1.1] - 2025-08-13
+
+### Fixed
 - Improve Claude prompts to output only file content instead of commentary
 - Bypass Claude CLI permissions in git hook environment to enable proper file updates
 
