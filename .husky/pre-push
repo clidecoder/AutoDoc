@@ -43,6 +43,33 @@ do
         continue
     fi
     
+    # Run Biome checks if available
+    if [ -f "package.json" ] && [ -f "biome.json" ]; then
+        echo "${GREEN}Running Biome checks...${NC}"
+        
+        # Check if npm script exists
+        if npm run | grep -q "check"; then
+            if npm run check; then
+                echo "${GREEN}✓ Biome checks passed${NC}"
+            else
+                echo "${RED}✗ Biome checks failed${NC}"
+                echo "${YELLOW}Run 'npm run fix' to auto-fix issues or fix manually${NC}"
+                exit 1
+            fi
+        elif command -v biome >/dev/null 2>&1; then
+            # Fallback to direct biome command
+            if biome check .; then
+                echo "${GREEN}✓ Biome checks passed${NC}"
+            else
+                echo "${RED}✗ Biome checks failed${NC}"
+                echo "${YELLOW}Run 'biome check --write .' to auto-fix issues${NC}"
+                exit 1
+            fi
+        else
+            echo "${YELLOW}Biome not available, skipping checks${NC}"
+        fi
+    fi
+    
     # Determine commit range
     if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
         # New branch

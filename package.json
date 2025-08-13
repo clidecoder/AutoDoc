@@ -5,7 +5,11 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"No tests specified\"",
-    "prepare": "husky"
+    "prepare": "husky",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "check": "biome check .",
+    "fix": "biome check --write ."
   },
   "repository": {
     "type": "git",
@@ -20,6 +24,7 @@
   },
   "homepage": "https://github.com/clidecoder/AutoDoc#readme",
   "devDependencies": {
+    "@biomejs/biome": "^2.1.4",
     "husky": "^9.1.7"
   }
 }
