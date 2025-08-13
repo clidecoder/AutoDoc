@@ -243,46 +243,46 @@ Rules: breaking change=major, new feature=minor, bugfix=patch, docs/chore=none"
     # Update documentation files with batch processing
     docs_updated=false
     
-    # Update CLAUDE.md (simplified)
-    if [ -f "CLAUDE.md" ]; then
-        claude_prompt="Output ONLY the updated CLAUDE.md file content. No commentary.
-
-Update with these changes:
-Version: $new_version
-Changes: $commit_summary
-
-Current CLAUDE.md:
-$(head -30 CLAUDE.md 2>/dev/null)
-
-OUTPUT ONLY THE COMPLETE CLAUDE.MD CONTENT with updates added:"
-        
-        if call_claude "$claude_prompt" "CLAUDE.md.tmp" "CLAUDE.md update"; then
-            if [ -f "CLAUDE.md.tmp" ] && ! cmp -s CLAUDE.md CLAUDE.md.tmp 2>/dev/null; then
-                mv CLAUDE.md.tmp CLAUDE.md
-                git add CLAUDE.md
-                docs_updated=true
-                log "✓ CLAUDE.md updated"
-            else
-                rm -f CLAUDE.md.tmp
-            fi
-        else
-            log_warning "CLAUDE.md update failed, skipping"
-            rm -f CLAUDE.md.tmp
-        fi
-    fi
+    # Update CLAUDE.md (commented out due to timeouts)
+    # if [ -f "CLAUDE.md" ]; then
+    #     claude_prompt="Output ONLY the updated CLAUDE.md file content. No commentary.
+    # 
+    # Update with these changes:
+    # Version: $new_version
+    # Changes: $commit_summary
+    # 
+    # Current CLAUDE.md:
+    # $(head -30 CLAUDE.md 2>/dev/null)
+    # 
+    # OUTPUT ONLY THE COMPLETE CLAUDE.MD CONTENT with updates added:"
+    #     
+    #     if call_claude "$claude_prompt" "CLAUDE.md.tmp" "CLAUDE.md update"; then
+    #         if [ -f "CLAUDE.md.tmp" ] && ! cmp -s CLAUDE.md CLAUDE.md.tmp 2>/dev/null; then
+    #             mv CLAUDE.md.tmp CLAUDE.md
+    #             git add CLAUDE.md
+    #             docs_updated=true
+    #             log "✓ CLAUDE.md updated"
+    #         else
+    #             rm -f CLAUDE.md.tmp
+    #         fi
+    #     else
+    #         log_warning "CLAUDE.md update failed, skipping"
+    #         rm -f CLAUDE.md.tmp
+    #     fi
+    # fi
     
     # Update CHANGELOG.md (simplified)
-    changelog_prompt="Output ONLY the updated CHANGELOG.md file content. Do not add any commentary or explanation.
+    changelog_prompt="Output ONLY the updated CHANGELOG.md file content. Do not add any commentary.
 
-Add this new entry to the CHANGELOG:
+ADD a new version entry at the top (after the header) for:
 Version: $new_version (from $current_version)
 Date: $(date +%Y-%m-%d)
 Changes: $commit_summary
 
-Current CHANGELOG.md:
-$(head -20 CHANGELOG.md 2>/dev/null)
+PRESERVE ALL EXISTING ENTRIES. Current CHANGELOG.md:
+$(cat CHANGELOG.md 2>/dev/null)
 
-OUTPUT ONLY THE COMPLETE CHANGELOG.MD CONTENT with the new entry added following Keep a Changelog format:"
+OUTPUT THE COMPLETE CHANGELOG.MD with new entry inserted after header but BEFORE existing entries:"
     
     if call_claude "$changelog_prompt" "CHANGELOG.md.tmp" "CHANGELOG update"; then
         if [ -f "CHANGELOG.md.tmp" ] && ! cmp -s CHANGELOG.md CHANGELOG.md.tmp 2>/dev/null; then
