@@ -1,0 +1,25 @@
+{
+  "name": "autodoc",
+  "version": "1.0.0",
+  "description": "> Intelligent documentation automation for every push",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"No tests specified\"",
+    "prepare": "husky"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clidecoder/AutoDoc.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/clidecoder/AutoDoc/issues"
+  },
+  "homepage": "https://github.com/clidecoder/AutoDoc#readme",
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}
