@@ -166,7 +166,9 @@ Rules:
 - No significant changes = none")
     
     # Calculate new version
-    IFS='.' read -r major minor patch <<< "$current_version"
+    major=$(echo "$current_version" | cut -d. -f1)
+    minor=$(echo "$current_version" | cut -d. -f2)
+    patch=$(echo "$current_version" | cut -d. -f3)
     case "$version_analysis" in
         "major")
             new_version="$((major + 1)).0.0"
