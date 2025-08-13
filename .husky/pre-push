@@ -1,5 +1,4 @@
-#!/usr/bin/env sh
-. "$(dirname -- "$0")/_/husky.sh"
+#!/bin/sh
 
 # Configuration
 MAIN_BRANCH="main" # or "master"
@@ -82,7 +81,7 @@ do
     other_commits=""
     
     # Analyze each commit
-    while IFS='|' read -r hash subject body; do
+    echo "$commits_raw" | while IFS='|' read -r hash subject body; do
         # Skip empty lines
         [ -z "$hash" ] && continue
         
@@ -111,7 +110,7 @@ do
         if echo "$subject $body" | grep -q "BREAKING CHANGE\|!:"; then
             breaking_commits="${breaking_commits}- ${subject}\n"
         fi
-    done <<< "$commits_raw"
+    done
     
     # Get current version
     current_version=$(get_current_version)
